@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"sync"
-	"time"
 )
 
 func main() {
@@ -17,8 +16,9 @@ func main() {
 		err := <-errors
 		log.Fatal(err)
 	}()
-	var currentFrame []byte
+	var currentFrame BitvisImage
 	var currentFrameLock sync.RWMutex
+	currentFrameUpdate := sync.NewCond(currentFrameLock.RLocker())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(res http.ResponseWriter, req *http.Request) {
@@ -42,39 +42,45 @@ func main() {
 			</html>
 		`))
 	})
-	mux.HandleFunc("/stream.mpng", func(res http.ResponseWriter, req *http.Request) {
-		res.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=--pngboundary")
-		res.WriteHeader(http.StatusOK)
+	mux.HandleFunc("/stream.mpng", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=--pngboundary")
+		w.WriteHeader(http.StatusOK)
 		for {
 			currentFrameLock.RLock()
-			buf := currentFrame
+			currentFrameUpdate.Wait()
+			img := currentFrame
 			currentFrameLock.RUnlock()
-			res.Write([]byte("--pngboundary"))
-			res.Write([]byte("Content-Type: image/png\n"))
-			res.Write([]byte(fmt.Sprintf("Content-Length: %d\n\n", len(buf))))
-			if _, err := io.Copy(res, bytes.NewReader(buf)); err != nil {
+			buf := encodeImage(&img)
+			w.Write([]byte("--pngboundary"))
+			w.Write([]byte("Content-Type: image/png\n"))
+			w.Write([]byte(fmt.Sprintf("Content-Length: %d\n\n", len(buf))))
+			if _, err := io.Copy(w, bytes.NewReader(buf)); err != nil {
 				return
 			}
-			time.Sleep(time.Millisecond * 2)
 		}
 	})
-	mux.HandleFunc("/frame.png", func(res http.ResponseWriter, req *http.Request) {
-		res.Header().Set("Content-Type", "image/png")
+	mux.HandleFunc("/frame.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
 		currentFrameLock.RLock()
-		buf := currentFrame
+		img := currentFrame
 		currentFrameLock.RUnlock()
-		io.Copy(res, bytes.NewReader(buf))
+		w.Write(encodeImage(&img))
 	})
 	go func() {
 		log.Fatal(http.ListenAndServe(":13378", mux))
 	}()
 
 	for img := range images {
-		var buf bytes.Buffer
-		enc := png.Encoder{CompressionLevel: png.BestSpeed}
-		enc.Encode(&buf, img)
 		currentFrameLock.Lock()
-		currentFrame = buf.Bytes()
+		currentFrame = img
+		currentFrameUpdate.Broadcast()
 		currentFrameLock.Unlock()
 	}
+}
+
+func encodeImage(img *BitvisImage) []byte {
+	var buf bytes.Buffer
+	enc := png.Encoder{CompressionLevel: png.BestSpeed}
+	enc.Encode(&buf, img)
+	return buf.Bytes()
 }

@@ -15,10 +15,10 @@ const (
 	LedpanelHeight = 48
 )
 
-func Listen() (chan image.Image, chan error) {
+func Listen() (<-chan BitvisImage, chan error) {
 	errs := make(chan error, 1)
-	out := make(chan image.Image, 1)
-	out <- bitvisImage{}
+	out := make(chan BitvisImage, 1)
+	out <- BitvisImage{}
 	go func() {
 		defer close(errs)
 		defer close(out)
@@ -43,7 +43,7 @@ func Listen() (chan image.Image, chan error) {
 	return out, errs
 }
 
-func handleConnection(conn net.Conn, out chan<- image.Image) error {
+func handleConnection(conn net.Conn, out chan<- BitvisImage) error {
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(time.Second * 4)); err != nil {
 			return err
@@ -58,7 +58,7 @@ func handleConnection(conn net.Conn, out chan<- image.Image) error {
 		}
 		io.CopyN(ioutil.Discard, conn, 2)
 
-		var img bitvisImage
+		var img BitvisImage
 		if _, err := io.ReadFull(conn, img[:]); err != nil {
 			return err
 		}
@@ -69,20 +69,20 @@ func handleConnection(conn net.Conn, out chan<- image.Image) error {
 	}
 }
 
-type bitvisImage [LedpanelWidth * LedpanelHeight / 4]uint8
+type BitvisImage [LedpanelWidth * LedpanelHeight / 4]uint8
 
-func (img bitvisImage) ColorModel() color.Model {
+func (img BitvisImage) ColorModel() color.Model {
 	return color.RGBAModel
 }
 
-func (img bitvisImage) Bounds() image.Rectangle {
+func (img BitvisImage) Bounds() image.Rectangle {
 	return image.Rectangle{
 		Min: image.Point{X: 0, Y: 0},
 		Max: image.Point{X: LedpanelWidth, Y: LedpanelHeight},
 	}
 }
 
-func (img bitvisImage) At(x, y int) color.Color {
+func (img BitvisImage) At(x, y int) color.Color {
 	return bitvisColor(img[y*LedpanelWidth/4+x/4] >> ((3 - uint(x)%4) * 2))
 }
 
